@@ -47,7 +47,7 @@ async function main() {
   console.log('🚀 Testing chat endpoints...')
   console.log(`   Base URL: ${BASE_URL}`)
   
-  const appId = 'test-agent'
+  const appId = 'main-agent'
   
   const invokeWorks = await testEndpoint('/invoke', appId)
   const chatWorks = await testEndpoint('/chat', appId)

@@ -397,6 +397,124 @@ export async function uploadAndIndexFile(
 }
 
 /**
+ * List all registered agents
+ * 
+ * @returns Array of agents
+ * 
+ * @example
+ * const agents = await listAgents()
+ * agents.forEach(agent => console.log(agent.id, agent.config?.name))
+ */
+export async function listAgents(): Promise<Array<{
+  id: string
+  config?: {
+    name?: string
+    description?: string
+    folders?: string[]
+    model?: string
+  }
+  created_at: string
+}>> {
+  return apiCall<Array<any>>('/manager/agents', {
+    method: 'GET',
+  })
+}
+
+/**
+ * Get a specific agent by ID
+ * 
+ * @param agentId - The agent ID
+ * @returns Agent details
+ * 
+ * @example
+ * const agent = await getAgent('main-agent')
+ */
+export async function getAgent(agentId: string): Promise<{
+  id: string
+  config?: any
+  created_at: string
+}> {
+  return apiCall<any>(`/manager/agents/${agentId}`, {
+    method: 'GET',
+  })
+}
+
+/**
+ * Create a new agent
+ * 
+ * @param agentId - The agent ID
+ * @param config - Agent configuration
+ * @returns Created agent
+ * 
+ * @example
+ * const agent = await createAgent('my-agent', {
+ *   name: 'My Agent',
+ *   folders: ['shared', 'team']
+ * })
+ */
+export async function createAgent(
+  agentId: string,
+  config?: {
+    name?: string
+    description?: string
+    folders?: string[]
+    model?: string
+  }
+): Promise<{
+  id: string
+  config?: any
+  created_at: string
+}> {
+  return apiCall<any>('/manager/agents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: agentId, config }),
+  })
+}
+
+/**
+ * Update an existing agent
+ * 
+ * @param agentId - The agent ID
+ * @param config - Updated configuration
+ * @returns Updated agent
+ * 
+ * @example
+ * const agent = await updateAgent('my-agent', {
+ *   folders: ['shared', 'sales-team']
+ * })
+ */
+export async function updateAgent(
+  agentId: string,
+  config: any
+): Promise<{
+  id: string
+  config?: any
+  created_at: string
+}> {
+  return apiCall<any>(`/manager/agents/${agentId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config }),
+  })
+}
+
+/**
+ * Delete an agent
+ * 
+ * @param agentId - The agent ID
+ * @returns Deletion result
+ * 
+ * @example
+ * await deleteAgent('old-agent')
+ */
+export async function deleteAgent(agentId: string): Promise<{ deleted: boolean }> {
+  return apiCall<{ deleted: boolean }>(`/manager/agents/${agentId}`, {
+    method: 'DELETE',
+  })
+}
+
+/**
  * Health check
  * 
  * @returns Health status
