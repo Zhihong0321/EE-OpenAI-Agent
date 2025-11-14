@@ -108,7 +108,7 @@ const server = http.createServer(async (req, res) => {
       <li><strong>Manager - Agents:</strong> /manager/agents</li>
       <li><strong>Manager - Files:</strong> /manager/files/*</li>
       <li><strong>Manager - Indexing:</strong> /manager/index, /manager/search</li>
-      <li><strong>Wrapper:</strong> /x-app/:appId/*</li>
+      <li><strong>Wrapper:</strong> /x-app/:appId/invoke, /x-app/:appId/chat</li>
     </ul>
   </div>
 </body>
@@ -378,7 +378,8 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    if (url.pathname.match(/^\/x-app\/[^/]+\/invoke$/) && req.method === 'POST') {
+    // Support both /invoke and /chat endpoints (chat is alias for frontend compatibility)
+    if ((url.pathname.match(/^\/x-app\/[^/]+\/invoke$/) || url.pathname.match(/^\/x-app\/[^/]+\/chat$/)) && req.method === 'POST') {
       if (!requireAuth(req)) return json(res, 401, { error: { type: 'authentication_error', message: 'Missing or invalid Authorization header', code: 'UNAUTHENTICATED', run_id: runId } })
       const body = await readJson(req)
       const appId = url.pathname.split('/')[2]

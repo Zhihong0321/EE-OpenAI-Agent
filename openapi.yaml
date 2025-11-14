@@ -1,0 +1,896 @@
+openapi: 3.0.3
+info:
+  title: OpenAI Agent Wrapper API
+  description: |
+    Hybrid AI agent system combining 3rd party provider (bltcy.ai) for chat completions 
+    and Supabase for file storage and vector search.
+    
+    ## Authentication
+    Most endpoints require Bearer token authentication:
+    ```
+    Authorization: Bearer YOUR_TOKEN
+    ```
+    
+    ## Architecture
+    - **Manager**: Handles agents, files, indexing, and search
+    - **Wrapper**: Executes agent workflows with OpenAI-compatible API
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+  - url: https://your-app.railway.app
+    description: Production (Railway)
+
+tags:
+  - name: Health
+    description: System health and diagnostics
+  - name: Manager - Agents
+    description: Agent lifecycle management
+  - name: Manager - Files
+    description: File storage operations (Supabase)
+  - name: Manager - Indexing
+    description: Vector indexing and search
+  - name: Wrapper
+    description: Agent invocation endpoints
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Manager token for authenticated endpoints
+  
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+              example: invalid_request_error
+            message:
+              type: string
+              example: Missing required parameter
+            code:
+              type: string
+              example: MISSING_PARAMETER
+            run_id:
+              type: string
+              example: abc123
+    
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+          example: agent-123
+        config:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+    
+    Document:
+      type: object
+      properties:
+        documentId:
+          type: string
+          format: uuid
+        chunkCount:
+          type: integer
+          example: 15
+    
+    SearchResult:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        chunk_index:
+          type: integer
+        score:
+          type: number
+          format: float
+        document:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            bucket:
+              type: string
+            file_key:
+              type: string
+    
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: string
+    
+    ChatCompletion:
+      type: object
+      properties:
+        id:
+          type: string
+        model:
+          type: string
+        object:
+          type: string
+          example: chat.completion
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: '#/components/schemas/ChatMessage'
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Returns service health status
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  run_id:
+                    type: string
+
+  /diagnostics:
+    get:
+      tags:
+        - Health
+      summary: System diagnostics
+      description: Check Supabase and provider configuration status
+      responses:
+        '200':
+          description: Diagnostic information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  supabaseUrl:
+                    type: boolean
+                  hasPublishable:
+                    type: boolean
+                  hasService:
+                    type: boolean
+                  providerUrl:
+                    type: boolean
+                  providerKey:
+                    type: boolean
+                  storageOk:
+                    type: boolean
+                  storageError:
+                    type: string
+                    nullable: true
+                  schemaOk:
+                    type: boolean
+                  schemaError:
+                    type: string
+                    nullable: true
+                  tables:
+                    type: object
+                    properties:
+                      documents:
+                        type: boolean
+                      chunks:
+                        type: boolean
+                      chunk_embeddings:
+                        type: boolean
+                  rpcOk:
+                    type: boolean
+                  rpcError:
+                    type: string
+                    nullable: true
+
+  /schema:
+    get:
+      tags:
+        - Health
+      summary: Get SQL schema
+      description: Returns the Supabase SQL schema for vector tables
+      responses:
+        '200':
+          description: SQL schema
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /manager/agents:
+    get:
+      tags:
+        - Manager - Agents
+      summary: List all agents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Agent'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    
+    post:
+      tags:
+        - Manager - Agents
+      summary: Create new agent
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: string
+                  description: Optional agent ID (auto-generated if omitted)
+                config:
+                  type: object
+                  additionalProperties: true
+            example:
+              id: my-agent
+              config:
+                model: gpt-4o
+                temperature: 0.7
+      responses:
+        '201':
+          description: Agent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '401':
+          description: Unauthorized
+
+  /manager/agents/{id}:
+    get:
+      tags:
+        - Manager - Agents
+      summary: Get agent details
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '404':
+          description: Agent not found
+    
+    patch:
+      tags:
+        - Manager - Agents
+      summary: Update agent
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                config:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Agent updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+    
+    delete:
+      tags:
+        - Manager - Agents
+      summary: Delete agent
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
+  /manager/files/upload:
+    post:
+      tags:
+        - Manager - Files
+      summary: Upload file to Supabase Storage
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - file_path
+              properties:
+                bucket:
+                  type: string
+                  description: Storage bucket name (defaults to SUPABASE_BUCKET env)
+                  example: agent-files
+                file_path:
+                  type: string
+                  description: Local file path to upload
+                  example: ./documents/guide.pdf
+                dest_path:
+                  type: string
+                  description: Destination path in bucket (optional)
+                  example: guides/guide.pdf
+                upsert:
+                  type: boolean
+                  description: Overwrite if exists
+                  default: false
+      responses:
+        '201':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket:
+                    type: string
+                  key:
+                    type: string
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+
+  /manager/files:
+    get:
+      tags:
+        - Manager - Files
+      summary: List files in bucket
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: bucket
+          in: query
+          schema:
+            type: string
+          description: Bucket name (defaults to SUPABASE_BUCKET)
+        - name: prefix
+          in: query
+          schema:
+            type: string
+          description: Filter by path prefix
+      responses:
+        '200':
+          description: List of files
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    id:
+                      type: string
+                    updated_at:
+                      type: string
+                    created_at:
+                      type: string
+                    last_accessed_at:
+                      type: string
+                    metadata:
+                      type: object
+
+  /manager/files/{key}:
+    delete:
+      tags:
+        - Manager - Files
+      summary: Delete file from bucket
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: File key/path in bucket
+        - name: bucket
+          in: query
+          schema:
+            type: string
+          description: Bucket name (defaults to SUPABASE_BUCKET)
+      responses:
+        '200':
+          description: File deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
+  /manager/files/url:
+    get:
+      tags:
+        - Manager - Files
+      summary: Get signed URL for file
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: bucket
+          in: query
+          schema:
+            type: string
+          description: Bucket name
+        - name: key
+          in: query
+          required: true
+          schema:
+            type: string
+          description: File key/path
+      responses:
+        '200':
+          description: Signed URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signedUrl:
+                    type: string
+
+  /manager/index:
+    post:
+      tags:
+        - Manager - Indexing
+      summary: Index file for vector search
+      description: |
+        Chunks file content, generates embeddings, and stores in Supabase pgvector.
+        
+        **Process:**
+        1. Download file from Supabase Storage
+        2. Chunk text (default 1200 chars, 200 overlap)
+        3. Generate embeddings via provider
+        4. Store in documents/chunks/chunk_embeddings tables
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - file_key
+              properties:
+                bucket:
+                  type: string
+                  description: Storage bucket (defaults to SUPABASE_BUCKET)
+                file_key:
+                  type: string
+                  description: File path in bucket
+                  example: guides/guide.pdf
+                agent_id:
+                  type: string
+                  description: Agent ID for scoping (defaults to AGENT_ID env)
+                  example: my-agent
+                title:
+                  type: string
+                  description: Document title (optional)
+                chunk_options:
+                  type: object
+                  properties:
+                    size:
+                      type: integer
+                      default: 1200
+                    overlap:
+                      type: integer
+                      default: 200
+                embedding_model:
+                  type: string
+                  default: text-embedding-3-small
+            example:
+              bucket: agent-files
+              file_key: guides/guide.pdf
+              agent_id: my-agent
+              title: User Guide
+      responses:
+        '200':
+          description: File indexed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          description: Bad request (missing schema, wrong dimensions, etc.)
+        '500':
+          description: Indexing failed
+
+  /manager/search:
+    post:
+      tags:
+        - Manager - Indexing
+      summary: Vector search across indexed files
+      description: |
+        Semantic search using embeddings and cosine similarity.
+        
+        Returns top-k most relevant chunks with metadata.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - query
+              properties:
+                agent_id:
+                  type: string
+                  description: Filter by agent ID (defaults to AGENT_ID env)
+                query:
+                  type: string
+                  description: Search query
+                  example: How do I reset my password?
+                top_k:
+                  type: integer
+                  description: Number of results to return
+                  default: 5
+                  minimum: 1
+                  maximum: 50
+                embedding_model:
+                  type: string
+                  default: text-embedding-3-small
+            example:
+              agent_id: my-agent
+              query: How do I reset my password?
+              top_k: 5
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent_id:
+                    type: string
+                  query:
+                    type: string
+                  top_k:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchResult'
+        '400':
+          description: Bad request
+
+  /x-app/{appId}/deploy:
+    post:
+      tags:
+        - Wrapper
+      summary: Deploy agent wrapper
+      description: Register a new agent wrapper instance
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                config:
+                  type: object
+      responses:
+        '200':
+          description: Wrapper deployed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appId:
+                    type: string
+                  status:
+                    type: string
+                  endpoints:
+                    type: object
+
+  /x-app/{appId}/invoke:
+    post:
+      tags:
+        - Wrapper
+      summary: Invoke agent (OpenAI-compatible)
+      description: |
+        Execute agent workflow with OpenAI-compatible API.
+        
+        **Features:**
+        - Automatic file search integration
+        - Streaming support
+        - Tool calling
+        - Rate limiting per appId
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Agent wrapper ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - messages
+              properties:
+                model:
+                  type: string
+                  default: gpt-4o-mini
+                  example: gpt-4o
+                messages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ChatMessage'
+                tools:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: [file_search, function]
+                tool_choice:
+                  type: string
+                  enum: [auto, none, required]
+                stream:
+                  type: boolean
+                  default: false
+                metadata:
+                  type: object
+                  properties:
+                    agent_id:
+                      type: string
+                    file_query:
+                      type: string
+                      description: Query for file search (if tool enabled)
+                    top_k:
+                      type: integer
+                      default: 5
+            example:
+              model: gpt-4o
+              messages:
+                - role: user
+                  content: What are the main features?
+              tools:
+                - type: file_search
+              metadata:
+                agent_id: my-agent
+                file_query: features
+                top_k: 5
+      responses:
+        '200':
+          description: Chat completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletion'
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-sent events for streaming
+        '401':
+          description: Unauthorized
+        '429':
+          description: Rate limit exceeded
+
+  /x-app/{appId}/chat:
+    post:
+      tags:
+        - Wrapper
+      summary: Chat with agent (alias for /invoke)
+      description: |
+        Alias endpoint for /invoke. Provides the same functionality for frontend compatibility.
+        
+        Execute agent workflow with OpenAI-compatible API.
+        
+        **Features:**
+        - Automatic file search integration
+        - Streaming support
+        - Tool calling
+        - Rate limiting per appId
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Agent wrapper ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - messages
+              properties:
+                model:
+                  type: string
+                  default: gpt-4o-mini
+                  example: gpt-4o
+                messages:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ChatMessage'
+                tools:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                        enum: [file_search, function]
+                tool_choice:
+                  type: string
+                  enum: [auto, none, required]
+                stream:
+                  type: boolean
+                  default: false
+                metadata:
+                  type: object
+                  properties:
+                    agent_id:
+                      type: string
+                    file_query:
+                      type: string
+                      description: Query for file search (if tool enabled)
+                    top_k:
+                      type: integer
+                      default: 5
+                    folders:
+                      type: array
+                      items:
+                        type: string
+                      description: Folder names to search in (defaults to ['shared'])
+            example:
+              model: gpt-4o
+              messages:
+                - role: user
+                  content: What are the main features?
+              tools:
+                - type: file_search
+              metadata:
+                agent_id: my-agent
+                file_query: features
+                top_k: 5
+                folders: ["shared", "docs"]
+      responses:
+        '200':
+          description: Chat completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletion'
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-sent events for streaming
+        '401':
+          description: Unauthorized
+        '429':
+          description: Rate limit exceeded
+
+  /x-app/{appId}:
+    get:
+      tags:
+        - Wrapper
+      summary: Get wrapper status
+      parameters:
+        - name: appId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Wrapper details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  appId:
+                    type: string
+                  health:
+                    type: string
