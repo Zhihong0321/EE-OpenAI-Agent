@@ -257,6 +257,66 @@ const server = http.createServer(async (req, res) => {
       const data = await uploadFile(bucket, body.file_path, body.dest_path, { upsert: !!body.upsert })
       return json(res, 201, { bucket, key: data.path })
     }
+    if (url.pathname === '/manager/files/upload-browser' && req.method === 'POST') {
+      if (!requireManagerAuth(req)) return json(res, 401, { error: { type: 'authentication_error', message: 'Unauthorized', code: 'UNAUTHENTICATED' } })
+      const contentType = req.headers['content-type'] || ''
+      if (!contentType.includes('multipart/form-data')) {
+        return json(res, 400, { error: { type: 'invalid_request_error', message: 'Content-Type must be multipart/form-data', code: 'INVALID_CONTENT_TYPE', run_id: runId } })
+      }
+      const boundary = contentType.split('boundary=')[1]
+      if (!boundary) return json(res, 400, { error: { type: 'invalid_request_error', message: 'Missing boundary', code: 'MISSING_BOUNDARY', run_id: runId } })
+      
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const buffer = Buffer.concat(chunks)
+      const parts = buffer.toString('binary').split('--' + boundary)
+      
+      let fileBuffer = null
+      let fileName = null
+      let folder = 'shared'
+      let bucket = process.env.SUPABASE_BUCKET
+      let upsert = false
+      
+      for (const part of parts) {
+        if (part.includes('Content-Disposition')) {
+          const nameMatch = part.match(/name="([^"]+)"/)
+          const filenameMatch = part.match(/filename="([^"]+)"/)
+          const contentStart = part.indexOf('\r\n\r\n') + 4
+          const contentEnd = part.lastIndexOf('\r\n')
+          const content = part.substring(contentStart, contentEnd)
+          
+          if (filenameMatch) {
+            fileName = filenameMatch[1]
+            fileBuffer = Buffer.from(content, 'binary')
+          } else if (nameMatch) {
+            const fieldName = nameMatch[1]
+            if (fieldName === 'folder') folder = content.trim()
+            if (fieldName === 'bucket') bucket = content.trim()
+            if (fieldName === 'upsert') upsert = content.trim() === 'true'
+          }
+        }
+      }
+      
+      if (!fileBuffer || !fileName) {
+        return json(res, 400, { error: { type: 'invalid_request_error', message: 'No file provided', code: 'MISSING_FILE', run_id: runId } })
+      }
+      
+      await ensureBucket(bucket)
+      const destPath = folder && folder !== 'shared' ? `${folder}/${fileName}` : fileName
+      
+      const { createClient } = await import('@supabase/supabase-js')
+      const publishable = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY
+      const secret = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || publishable
+      const supabase = createClient(process.env.SUPABASE_URL, secret)
+      
+      const { data, error } = await supabase.storage.from(bucket).upload(destPath, fileBuffer, { 
+        upsert,
+        contentType: 'application/octet-stream'
+      })
+      
+      if (error) throw error
+      return json(res, 201, { bucket, key: data.path, folder })
+    }
     if (url.pathname === '/manager/files' && req.method === 'GET') {
       if (!requireManagerAuth(req)) return json(res, 401, { error: { type: 'authentication_error', message: 'Unauthorized', code: 'UNAUTHENTICATED' } })
       const bucket = url.searchParams.get('bucket') || process.env.SUPABASE_BUCKET
